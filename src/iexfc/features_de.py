@@ -32,13 +32,40 @@ GEN = {"Wind onshore": "wind_on", "Wind offshore": "wind_off", "Photovoltaics": 
        "Lignite": "lignite", "Hard coal": "coal", "Fossil gas": "gas"}
 
 
-def load_smard_dir(folder: str) -> dict[str, pd.DataFrame]:
+FORECAST_KEYS = ("Forecasted_consumption", "Forecasted_generation_Day-Ahead")
+
+
+def load_smard_dir(folder: str, forecasts: bool = False) -> dict[str, pd.DataFrame]:
+    """Load the SMARD exports in `folder`. With forecasts=True, also load the day-ahead forecasts
+    of consumption and generation (SMARD: "Forecasted consumption" and "Forecasted generation
+    Day-Ahead", Germany, hourly)."""
     out = {}
-    for key in ("Day-ahead_prices", "Actual_consumption", "Actual_generation"):
+    keys = ("Day-ahead_prices", "Actual_consumption", "Actual_generation") + (FORECAST_KEYS if forecasts else ())
+    for key in keys:
         files = sorted(glob.glob(f"{folder}/*{key}*_Hour.csv"))
         if not files:
-            raise FileNotFoundError(f"no {key} files in {folder}")
+            raise FileNotFoundError(f"no {key} files in {folder} (download them from smard.de, see README)")
         out[key] = whole_days(load_many(files), step_seconds=3600)
+    return out
+
+
+def _col(df: pd.DataFrame, name: str) -> pd.Series:
+    """Column by its short SMARD name, ignoring case (e.g. 'grid load', 'Wind onshore')."""
+    for c in df.columns:
+        if c.strip().lower() == name.lower():
+            return df[c]
+    raise KeyError(f"column '{name}' not found; columns are {list(df.columns)}")
+
+
+def forecast_panels(data: dict[str, pd.DataFrame], idx) -> dict[str, pd.DataFrame]:
+    """Day-ahead forecasts for delivery day D on the day x hour grid (NOT lagged: they are
+    published by the TSOs before the auction for D closes)."""
+    fc, fg = data["Forecasted_consumption"], data["Forecasted_generation_Day-Ahead"]
+    out = {"load_fc": to_day_hour(_col(fc, "grid load")).reindex(idx),
+           "wind_on_fc": to_day_hour(_col(fg, "Wind onshore").fillna(0)).reindex(idx),
+           "wind_off_fc": to_day_hour(_col(fg, "Wind offshore").fillna(0)).reindex(idx),
+           "solar_fc": to_day_hour(_col(fg, "Photovoltaics").fillna(0)).reindex(idx)}
+    out["resload_fc"] = out["load_fc"] - out["wind_on_fc"] - out["wind_off_fc"] - out["solar_fc"]
     return out
 
 
@@ -60,7 +87,8 @@ def _stack_stat(frame, lags, fn):
         return pd.DataFrame(fn(arr, axis=0), index=frame.index, columns=frame.columns)
 
 
-def build_features_de(data: dict[str, pd.DataFrame], first_target: str = "2019-02-01") -> pd.DataFrame:
+def build_features_de(data: dict[str, pd.DataFrame], first_target: str = "2019-02-01",
+                      forecasts: bool = False) -> pd.DataFrame:
     prices, cons, gen = data["Day-ahead_prices"], data["Actual_consumption"], data["Actual_generation"]
     P = to_day_hour(prices["Germany/Luxembourg"])
     idx = P.index
@@ -106,6 +134,11 @@ def build_features_de(data: dict[str, pd.DataFrame], first_target: str = "2019-0
         put(f"{v}_lag2", F.shift(2))
         put_day(f"{v}_day_lag2", F.sum(axis=1, min_count=20).shift(2))
     put_day("load_chg_wk", LOAD.sum(axis=1).shift(2) - LOAD.sum(axis=1).shift(9))
+    # --- day-ahead forecasts for day D itself (optional) ---
+    if forecasts:
+        for v, F in forecast_panels(data, idx).items():
+            put(v, F)
+            put_day(f"{v}_day", F.sum(axis=1, min_count=20))
     # --- calendar ---
     cols["hour"] = np.tile(np.arange(H), n)
     cols["dow"] = np.repeat(tdays.dayofweek.to_numpy(), H)

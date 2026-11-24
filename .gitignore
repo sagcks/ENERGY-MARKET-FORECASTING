@@ -1,9 +1,14 @@
-data/
-legacy/
-.venv/
-*.csv
-*.xlsx
+# Python and tools
 __pycache__/
-*.pyc
-.DS_Store
+.venv/
 .pytest_cache/
+.env
+.DS_Store
+
+# Data and results are not published (IEX terms unchecked; files are large)
+data/
+*.xlsx
+*.csv
+
+# Internship code: add it only once APPCPL's written confirmation has arrived
+legacy/

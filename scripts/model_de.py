@@ -73,9 +73,11 @@ def main():
     ap.add_argument("--smard", default="data/external/smard")
     ap.add_argument("--out", type=Path, default=Path("data/results"))
     ap.add_argument("--test-start", default="2024-01-01")
+    ap.add_argument("--forecasts", action="store_true",
+                    help="add SMARD day-ahead load, wind and solar forecasts for day D (writes predictions_de_fc.csv)")
     a = ap.parse_args()
 
-    T = build_features_de(load_smard_dir(a.smard))
+    T = build_features_de(load_smard_dir(a.smard, a.forecasts), forecasts=a.forecasts)
     F = feature_columns(T)
     T = T.dropna(subset=["p1", "p7"] + [f"base_q{q}" for q in L]).reset_index(drop=True)
     end = T["date"].max() + pd.Timedelta(days=1)
@@ -112,7 +114,7 @@ def main():
     R = recalibrate(R, "q", "qc")
     R = recalibrate(R, "k", "kc")
     a.out.mkdir(parents=True, exist_ok=True)
-    R.to_csv(a.out / "predictions_de.csv", index=False)
+    R.to_csv(a.out / ("predictions_de_fc.csv" if a.forecasts else "predictions_de.csv"), index=False)
 
     def probs(g):
         y = g["y"].to_numpy()

@@ -5,27 +5,35 @@ regulatory price limit. The main case is the Indian Energy Exchange (IEX) day-ah
 where a price cap binds in many 15-minute blocks; the transfer test is Germany–Luxembourg,
 where the upper limit never binds but prices often fall below zero.
 
-Author: Sagnik Chakravarty. Working paper in preparation; a two-page research summary is
-available on request.
+Author: Sagnik Chakravarty. Paper: *Probabilistic Day-Ahead Electricity Price Forecasting Under a
+Binding Price Cap: Evidence from India and Germany* (preprint on
+[SSRN](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7726358); revised version in preparation).
 
 ## Main results
 
-Rolling-origin evaluation, models retrained every quarter, test period January 2024 to
-November 2026. Pinball loss is averaged over the 10%–90% quantiles (lower is better).
+Rolling-origin evaluation, LightGBM retrained every quarter. Common sample where every model has a
+forecast: 2 March 2024 to 31 October 2026. Pinball loss averaged over the 10%–90% quantiles
+(lower is better); DM t compares the two-part model with each row (negative = two-part better).
 
-| Market | Empirical quantiles | One-part LightGBM | Two-part (regime) | Two-part vs one-part |
+| Model | India (Rs/MWh) | DM t | Germany (€/MWh) | DM t |
 |---|---|---|---|---|
-| India, 99,456 blocks, Rs/MWh | 376.1 | 217.7 (−42.1%) | 208.5 (−44.6%) | −4.2%, DM t = −7.1 |
-| India without bid data | 376.1 | 221.9 (−41.0%) | 215.0 (−42.8%) | −3.1%, DM t = −4.1 |
-| Germany, 25,128 hours, €/MWh | 11.63 | 9.02 (−22.5%) | 9.00 (−22.7%) | −0.25%, DM t = −1.1 |
+| Empirical 28-day quantiles | 382.0 | −11.9 | 11.61 | −10.7 |
+| QR-X (pooled) | 256.7 | −11.4 | 10.11 | −8.6 |
+| QRA (pooled) | 236.6 | −7.7 | 9.58 | −6.0 |
+| QRA (per block/hour) | 246.2 | −9.1 | 9.64 | −5.0 |
+| LEAR-QRA | 269.7 | −11.0 | 8.72 | +3.2 |
+| QRA on LEAR + LightGBM | 245.3 | −8.2 | **8.54** | +5.3 |
+| One-part LightGBM | 223.8 | −6.9 | 9.19 | −1.8 |
+| Two-part QRA (cap structure on QRA) | 215.3 | −0.7 | – | – |
+| **Two-part LightGBM** | **213.9** | – | 9.16 | – |
 
-* The method transfers: in Germany it beats the empirical benchmark clearly
-  (Diebold–Mariano t = −9.8) and predicts negative-price hours with a Brier score of 0.036
-  against 0.062 for persistence (India, cap hits: 0.036 against 0.061).
-* The two-part model, which predicts the extreme regime separately, helps only where a limit
-  binds: Indian prices pile up at the cap, German negative prices spread out down to −500 €/MWh.
-* Recalibration from past errors brings 80% interval coverage from 72% to 82% (India) and
-  from 72% to 79% (Germany).
+* **India** (86,304 blocks): the two-part model beats every benchmark. The gain is made in capped
+  blocks, holds in all six half-years and without bid data (−3.1%, DM t = −4.1), and the same cap
+  structure on top of QRA does almost as well, so the structure rather than the learner drives it.
+* **Germany** (23,376 hours): prices do not pile up at a limit; the two-part structure brings no
+  significant gain and QRA on LEAR + LightGBM is best.
+* Cap-hit probability (India): Brier 0.036 against 0.061 for persistence; AUC 0.986.
+* Recalibration from past errors brings 80% interval coverage from 72% to 82–83% (India).
 
 ## How the models work
 
@@ -52,6 +60,12 @@ with the empirical error quantiles of the previous 60 days (ending two days befo
 | `scripts/recalibrate.py` | recalibration from past errors |
 | `scripts/ablation_nobid.py` | India without bid and volume features |
 | `scripts/model_de.py` | Germany: all models, recalibration and summary |
+| `scripts/benchmarks_qr.py` | QR-X and pooled QRA benchmarks |
+| `scripts/benchmarks_lear.py` | LEAR (Lago et al. 2021), LEAR-QRA and per-block QRA |
+| `scripts/twopart_qra.py` | India: the cap structure on top of QRA |
+| `scripts/eval_benchmarks2.py` | comparison table with Diebold–Mariano tests |
+| `scripts/robustness.py` | recalibration windows and results by half-year |
+| `run_all.sh` | runs everything above in order |
 | `tests/` | `pytest` tests for the parsers and loaders |
 | `docs/DATA.md` | data sources, price-cap notes, open questions |
 
@@ -72,23 +86,23 @@ CC BY 4.0): download *Day-ahead prices* (Germany/Luxembourg), *Actual consumptio
 files in `data/external/smard/`. Grid-India daily data: `data/external/POSOCO_data.csv`
 (see `docs/DATA.md`).
 
+Optional: SMARD *Forecasted consumption* and *Forecasted generation Day-Ahead* (Germany, Hour,
+CSV, same dates) in the same folder, for the run with day-ahead forecasts.
+
+Run everything (from the project folder, with the virtual environment active):
 ```
-# India
-python scripts/model_gbm.py --prices data/dam_all.csv
-python scripts/model_capaware.py --prices data/dam_all.csv
-python scripts/recalibrate.py --pred data/results/predictions_capaware.csv --prefix k --out predictions_capaware_cal.csv
-python scripts/ablation_nobid.py --prices data/dam_all.csv
-# Germany
-python scripts/model_de.py --smard data/external/smard
+bash run_all.sh               # India and Germany, all models and benchmarks
+bash run_all.sh germany-fc    # Germany with day-ahead load, wind and solar forecasts
 ```
-Run times on a laptop: about 6–7 minutes per India script and 6–9 minutes for Germany.
-Results reproduce across machines to within the last decimal (LightGBM sampling).
+Logs and tables go to `data/results/logs/`. LEAR is the slow step (a few hours on a laptop; it
+uses all CPU cores but one); the other steps take minutes each.
 
 ## Limitations
 
-Simple benchmarks only so far (no quantile regression averaging, ARX or neural networks);
-no weather or holiday features; the German model uses lagged actuals rather than day-ahead
-forecasts; Germany is hourly and India 15-minute; design choices were made on the test period.
+No distributional neural networks or censored (Tobit) benchmarks yet; no weather or holiday
+features; the main German run uses lagged actuals rather than day-ahead forecasts (see
+`run_all.sh germany-fc`); Germany is hourly and India 15-minute; some design choices were made
+with the test period in view.
 
 ## Licence
 

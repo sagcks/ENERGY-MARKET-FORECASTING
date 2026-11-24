@@ -74,7 +74,7 @@ def design(df, cols, hour_col, n_hours):
     return np.column_stack([np.ones(len(df)), X, H, D])
 
 
-def load_market(market, smard):
+def load_market(market, smard, forecasts=False):
     if market == "india":
         from iexfc.features import build_features, load_posoco
         T = build_features(pd.read_csv("data/dam_all.csv", parse_dates=["date"]),
@@ -91,10 +91,13 @@ def load_market(market, smard):
         T = T.rename(columns={"block": "slot"})
         return T, R, cols, (0.0, 10000.0)
     from iexfc.features_de import build_features_de, load_smard_dir
-    T = build_features_de(load_smard_dir(smard))
+    T = build_features_de(load_smard_dir(smard, forecasts), forecasts=forecasts)
     cols = ["p1", "p2", "p7", "p1_prev_hour", "p1_next_hour", "p_min7", "p_max7", "d1_mean", "d1_max", "d1_min",
             "ext1", "d1_ext_share", "fr_p1", "nl_p1", "load_lag2", "resload_lag2", "wind_on_lag2", "solar_lag2"]
-    R = pd.read_csv("data/results/predictions_de.csv", parse_dates=["date"])
+    if forecasts:
+        cols += ["load_fc", "resload_fc", "wind_on_fc", "wind_off_fc", "solar_fc"]
+    R = pd.read_csv("data/results/predictions_de_fc.csv" if forecasts else "data/results/predictions_de.csv",
+                    parse_dates=["date"])
     R = R[["date", "hour", "y", "p1", "p7", "pred_point"] + [f"base_q{q}" for q in L] + [f"q{q}" for q in L]
           + [f"k{q}" for q in L]].rename(columns={"hour": "slot"})
     T = T.rename(columns={"hour": "slot"})
@@ -106,9 +109,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--market", choices=["india", "germany"], required=True)
     ap.add_argument("--smard", default="data/external/smard")
+    ap.add_argument("--forecasts", action="store_true", help="Germany with day-ahead forecasts (suffix _fc)")
     a = ap.parse_args()
+    tag = "_fc" if a.forecasts else ""
     lo, hi = None, None
-    T, R, cols, (lo, hi) = load_market(a.market, a.smard)
+    T, R, cols, (lo, hi) = load_market(a.market, a.smard, a.forecasts)
     t0 = time.time()
 
     # ---------------- QR-X: quarterly refit on the previous 365 days ----------------
@@ -156,7 +161,7 @@ def main():
             print(f"QRA {d:%Y-%m-%d} ({time.time()-t0:.0f}s)", flush=True)
     R[[f"a{q}" for q in L]] = qra
     Path("data/results").mkdir(parents=True, exist_ok=True)
-    R.to_csv(f"data/results/benchmarks_{a.market}.csv", index=False)
+    R.to_csv(f"data/results/benchmarks_{a.market}{tag}.csv", index=False)
 
     # ---------------- evaluation ----------------
     models = {"Empirical 28-day": "base_q", "QR-X (linear)": "x", "QRA (linear)": "a",
